@@ -17,17 +17,11 @@ from pathlib import Path
 import click
 from async_adbutils import adb
 from mobilerun_core_local.driver.android.portal import (
-    DOWNLOAD_BASE,
     PORTAL_PACKAGE_NAME,
-    check_portal_accessibility,
-    download_portal_apk,
-    download_versioned_portal_apk,
-    enable_portal_accessibility,
     ping_portal,
     ping_portal_content,
     ping_portal_tcp,
     portal_content_uri,
-    setup_portal,
 )
 from mobilerun_core_local.driver.ios import discover_ios_device, validate_ios_portal_url
 from mobilerun_core_local.driver.visual_remote import VISUAL_REMOTE_CONNECTION
@@ -51,7 +45,6 @@ from mobilerun.agent.utils.oauth.openai_oauth_llm import (
     DEFAULT_OPENAI_OAUTH_CALLBACK_PORT,
     DEFAULT_OPENAI_OAUTH_CREDENTIAL_PATH,
 )
-from mobilerun.agent.utils.portal_setup import portal_version_kwargs
 from mobilerun.cli.configure_wizard import (
     ConfigureWizardCallbacks,
     run_configure_wizard,
@@ -78,6 +71,7 @@ from mobilerun.config_manager.credential_paths import (
 )
 from mobilerun.log_handlers import CLILogHandler, configure_logging
 from mobilerun.macro.cli import macro_cli
+from mobilerun.security import capability_enabled, require_capability
 from mobilerun.telemetry import print_telemetry_message
 
 # Suppress all warnings
@@ -280,9 +274,9 @@ async def run_command(
         llm = None
 
         if provider or model:
-            assert (
-                provider and model
-            ), "Either both provider and model must be provided or none of them"
+            assert provider and model, (
+                "Either both provider and model must be provided or none of them"
+            )
             llm_kwargs = {}
             if temperature is not None:
                 llm_kwargs["temperature"] = temperature
@@ -632,13 +626,13 @@ async def _list_cloud_devices(
     a missing credential is treated as "no cloud section" rather than an
     error — useful for the unified ``mobilerun devices`` output.
     """
+    require_capability("CLOUD")
     api_key = resolve_cloud_api_key()
     if not api_key:
         if silent_if_no_key:
             return 0
         message = (
-            f"No cloud API key found. Set {CLOUD_API_KEY_ENV} or run "
-            "`mobilerun login`."
+            f"No cloud API key found. Set {CLOUD_API_KEY_ENV} or run `mobilerun login`."
         )
         if raise_on_error:
             raise click.ClickException(message)
@@ -676,8 +670,7 @@ async def _list_cloud_devices(
         dtype = data.get("type", "")
         state_color = "green" if state == "ready" else "yellow"
         console.print(
-            f"  • [bold]{device_id}[/]  {name}  "
-            f"\\[[{state_color}]{state}[/]]  [dim]{dtype}[/]"
+            f"  • [bold]{device_id}[/]  {name}  \\[[{state_color}]{state}[/]]  [dim]{dtype}[/]"
         )
     return len(items)
 
@@ -719,7 +712,7 @@ async def devices(cloud: bool, base_url: str | None):
         console.print(f"[red]Error listing local devices: {e}[/]")
 
     # Cloud section (only when authenticated — silent otherwise).
-    if resolve_cloud_api_key():
+    if capability_enabled("CLOUD") and resolve_cloud_api_key():
         console.print()
         await _list_cloud_devices(
             base_url,
@@ -748,6 +741,7 @@ DEFAULT_DEVICE_CLIENT_ID = "mobilerun-cli"
 )
 def login(auth_url: str | None, client_id: str):
     """Authenticate via OAuth 2.0 device authorization and save the session token."""
+    require_capability("CLOUD")
     import webbrowser
 
     from mobilerun.cli import deviceauth
@@ -804,6 +798,7 @@ def logout():
 @cli.command()
 def whoami():
     """Show the currently logged-in Mobilerun cloud user."""
+    require_capability("CLOUD")
     from mobilerun.cli import deviceauth
 
     creds = deviceauth.load_credentials()
@@ -858,10 +853,8 @@ async def _wait_for_portal_service(
 ) -> bool:
     """Wait until Portal's accessibility service responds.
 
-    Android drops the service when it is enabled before a fresh install is
-    registered, so it is enabled again while waiting. ``/ping`` answers once
-    the service is bound, even without an active window. A busy device can
-    take well over 10s to bind it.
+    Poll only: enabling the service is a manual user decision. ``/ping``
+    answers once the service is bound, even without an active window.
     """
     uri = portal_content_uri(PORTAL_PACKAGE_NAME, "ping")
     loop = asyncio.get_running_loop()
@@ -871,8 +864,6 @@ async def _wait_for_portal_service(
             result = await device_obj.shell(f"content query --uri {uri}")
             if '"status":"success"' in result:
                 return True
-            if not await check_portal_accessibility(device_obj):
-                await enable_portal_accessibility(device_obj)
         except Exception:
             pass
         await asyncio.sleep(interval)
@@ -887,127 +878,65 @@ async def _setup_portal(
     specific_version: str | None = None,
     in_place: bool = False,
 ):
-    """Internal async function to install and enable the Mobilerun Portal on a device."""
+    """Install only an explicit local APK without changing device permissions."""
+    if not path or latest or specific_version:
+        raise click.ClickException(
+            "Specify --path to a reviewed local APK. Portal downloads are disabled."
+        )
+    try:
+        apk = Path(path).expanduser().resolve(strict=True)
+    except OSError as error:
+        raise click.ClickException(
+            "--path must point to an existing local APK."
+        ) from error
+    if not apk.is_file() or apk.suffix.lower() != ".apk":
+        raise click.ClickException("--path must point to a local APK file.")
     try:
         if not device:
             try:
                 device = await resolve_android_serial()
             except AndroidDeviceSelectionError as e:
-                console.print(f"[bold red]Error:[/] {e}")
-                return
+                raise click.ClickException(str(e)) from e
             console.print(f"[blue]Using device:[/] {device}")
 
         device_obj = await adb.device(device)
         if not device_obj:
-            console.print(
-                f"[bold red]Error:[/] Could not get device object for {device}"
-            )
-            return
+            raise click.ClickException(f"Could not get device object for {device}")
 
-        # CLI-specific options: path, specific_version, latest
-        if path:
-            console.print(f"[bold blue]Using provided APK:[/] {path}")
-            apk_context = nullcontext(path)
-        elif specific_version:
-            version = specific_version.lstrip("v")
-            version = f"v{version}"
-            download_base = DOWNLOAD_BASE
-            apk_context = download_versioned_portal_apk(version, download_base, debug)
-        elif latest:
-            console.print("[bold blue]Downloading latest Portal APK...[/]")
-            apk_context = download_portal_apk(debug)
-        else:
-            # Default: delegate to shared setup_portal()
-            success = await setup_portal(
-                device_obj,
-                debug,
-                **portal_version_kwargs(setup_portal, in_place=in_place),
-            )
-            if success:
-                console.print(
-                    "\n[bold green]Setup complete![/] The Mobilerun Portal is now installed and ready to use."
-                )
-            else:
-                console.print(
-                    "[bold red]Setup failed.[/] Run 'mobilerun doctor' for diagnostics."
-                )
-            return
-
-        # Install from explicit path/version/latest
+        # Never consult a remote release or compatibility map.
+        apk_context = nullcontext(str(apk))
         with apk_context as apk_path:
             if not os.path.exists(apk_path):
                 console.print(f"[bold red]Error:[/] APK file not found at {apk_path}")
                 return
 
-            console.print(f"[bold blue]Step 1/2: Installing APK:[/] {apk_path}")
+            console.print(f"[bold blue]Installing local APK:[/] {apk_path}")
             try:
                 await device_obj.install(
                     apk_path,
                     nolaunch=True,
-                    uninstall=True,
-                    flags=["-g"],
+                    uninstall=False,
+                    flags=[],
                     silent=not debug,
                 )
             except Exception as e:
-                console.print(f"[bold red]Installation failed:[/] {e}")
-                return
+                raise click.ClickException(f"Installation failed: {e}") from e
 
             console.print("[bold green]Installation successful![/]")
 
-            console.print("[bold blue]Step 2/2: Enabling accessibility service[/]")
-
-            try:
-                await enable_portal_accessibility(device_obj)
-                if not await _wait_for_portal_service(device_obj):
-                    raise RuntimeError("the service did not respond in time")
-
-                console.print("[green]Accessibility service enabled successfully![/]")
-                console.print(
-                    "\n[bold green]Setup complete![/] The Mobilerun Portal is now installed and ready to use."
-                )
-
-            except Exception as e:
-                console.print(
-                    f"[yellow]Could not automatically enable accessibility service: {e}[/]"
-                )
-                console.print(
-                    "[yellow]Opening accessibility settings for manual configuration...[/]"
-                )
-
-                await device_obj.shell(
-                    "am start -a android.settings.ACCESSIBILITY_SETTINGS"
-                )
-
-                console.print(
-                    "\n[yellow]Please complete the following steps on your device:[/]"
-                )
-                console.print(
-                    f"1. Find [bold]{PORTAL_PACKAGE_NAME}[/] in the accessibility services list"
-                )
-                console.print("2. Tap on the service name")
-                console.print(
-                    "3. Toggle the switch to [bold]ON[/] to enable the service"
-                )
-                console.print("4. Accept any permission dialogs that appear")
-
-                console.print(
-                    "\n[bold green]APK installation complete![/] Please manually enable the accessibility service using the steps above."
-                )
+            console.print(
+                "Review and grant permissions and accessibility manually on the device."
+            )
 
     except Exception as e:
-        console.print(f"[bold red]Error:[/] {e}")
-
-        if debug:
-            import traceback
-
-            traceback.print_exc()
+        raise click.ClickException(f"Portal setup failed: {e}") from e
 
 
 @cli.command()
 @click.option("--device", "-d", help="Device serial number or IP address", default=None)
 @click.option(
     "--path",
-    help="Path to the Mobilerun Portal APK to install on the device. If not provided, the latest portal apk version will be downloaded and installed.",
+    help="Required path to a reviewed local Portal APK; no downloads or automatic grants.",
     default=None,
 )
 @click.option(
@@ -1033,7 +962,7 @@ async def setup(
     latest: bool,
     debug: bool,
 ):
-    """Install and enable the Mobilerun Portal on a device."""
+    """Install a local Portal APK; permissions must be enabled manually."""
     await _setup_portal(path, device, debug, latest, portal_version)
 
 

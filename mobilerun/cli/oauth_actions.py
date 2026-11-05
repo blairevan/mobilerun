@@ -23,6 +23,7 @@ from mobilerun.agent.utils.oauth.openai_oauth_llm import (
     OpenAIOAuth,
 )
 from mobilerun.config_manager.auth_profile_store import AuthProfileStore
+from mobilerun.security import reject_remote_model_login
 
 SETUP_TOKEN_EXPIRES_IN_SECONDS = 365 * 24 * 60 * 60
 
@@ -36,6 +37,7 @@ def run_openai_oauth_login(
     callback_path: str = DEFAULT_OPENAI_OAUTH_CALLBACK_PATH,
     open_browser: bool = True,
 ) -> None:
+    reject_remote_model_login()
     deadline = OAuthLoginDeadline(
         timeout,
         timeout_message="OpenAI OAuth login timed out.",
@@ -65,6 +67,7 @@ def run_gemini_oauth_login(
     callback_path: str = "/oauth2callback",
     open_browser: bool = True,
 ) -> None:
+    reject_remote_model_login()
     deadline = OAuthLoginDeadline(
         timeout,
         timeout_message="Gemini OAuth login timed out.",
@@ -116,6 +119,7 @@ def run_grok_oauth_login(
     no_browser: bool | None = None,
 ) -> None:
     """Authenticate directly with xAI and save Mobilerun-owned credentials."""
+    reject_remote_model_login()
     deadline = OAuthLoginDeadline(
         timeout,
         timeout_message="XAI OAuth login timed out.",
@@ -144,6 +148,7 @@ def run_anthropic_setup_token_oauth(
     callback_path: str = "/callback",
     open_browser: bool = True,
 ) -> str:
+    reject_remote_model_login()
     deadline = OAuthLoginDeadline(
         timeout,
         timeout_message="Anthropic OAuth login timed out.",

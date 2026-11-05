@@ -40,6 +40,10 @@ class MCPClientManager:
         if not self.config.enabled:
             return {}
 
+        from mobilerun.security import require_capability
+
+        require_capability("MCP")
+
         for server_name, server_config in self.config.servers.items():
             if not server_config.enabled:
                 continue
@@ -58,6 +62,9 @@ class MCPClientManager:
         self, server_name: str, config: "MCPServerConfig"
     ) -> None:
         """Connect temporarily to fetch tool schemas."""
+        from mobilerun.security import require_capability
+
+        require_capability("MCP")
         # Lazy import to avoid circular dependency with mobilerun.mcp package
         from mcp.client.session import ClientSession
         from mcp.client.stdio import StdioServerParameters, stdio_client
@@ -105,6 +112,9 @@ class MCPClientManager:
 
     async def call_tool(self, tool_name: str, arguments: dict) -> Any:
         """Call an MCP tool, connecting lazily if needed."""
+        from mobilerun.security import require_capability
+
+        require_capability("MCP")
         if tool_name not in self._tools:
             raise ValueError(f"Unknown MCP tool: {tool_name}")
 
@@ -119,6 +129,9 @@ class MCPClientManager:
 
     async def _connect_server(self, server_name: str) -> None:
         """Establish persistent connection to a server."""
+        from mobilerun.security import require_capability
+
+        require_capability("MCP")
         # Lazy import to avoid circular dependency with mobilerun.mcp package
         from mcp.client.session import ClientSession
         from mcp.client.stdio import StdioServerParameters, stdio_client

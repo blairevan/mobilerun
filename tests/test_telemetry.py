@@ -1,7 +1,7 @@
+"""Regression tests for permanently disabled telemetry and state event compatibility."""
+
 import asyncio
-import threading
-import time
-from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import Mock
 
 import pytest
 
@@ -9,165 +9,25 @@ from mobilerun.telemetry import tracker
 from mobilerun.telemetry.events import PackageVisitEvent
 
 PRIMARY_TELEMETRY_ENV = "MOBILERUN_TELEMETRY_ENABLED"
-LEGACY_TELEMETRY_ENV = "DROIDRUN_TELEMETRY_ENABLED"
 
 
-def _package_visit_event() -> PackageVisitEvent:
-    return PackageVisitEvent(
-        package_name="com.example.settings",
-        activity_name=".MainActivity",
-        step_number=3,
-    )
-
-
-@pytest.fixture(autouse=True)
-def reset_telemetry_state(monkeypatch):
-    monkeypatch.delenv(PRIMARY_TELEMETRY_ENV, raising=False)
-    monkeypatch.delenv(LEGACY_TELEMETRY_ENV, raising=False)
-    monkeypatch.setattr(tracker, "_posthog", None)
-
-
-def test_telemetry_is_enabled_by_default(monkeypatch) -> None:
-    monkeypatch.delenv(PRIMARY_TELEMETRY_ENV, raising=False)
-    monkeypatch.delenv(LEGACY_TELEMETRY_ENV, raising=False)
-
-    assert tracker.is_telemetry_enabled() is True
-    assert tracker.is_telemetry_enabled(config_enabled=True) is True
-
-
-def test_config_false_disables_telemetry() -> None:
-    assert tracker.is_telemetry_enabled(config_enabled=False) is False
-
-
-def test_environment_false_disables_telemetry(monkeypatch) -> None:
-    monkeypatch.setenv(PRIMARY_TELEMETRY_ENV, "false")
-
-    assert tracker.is_telemetry_enabled() is False
+@pytest.mark.parametrize("value", ["true", "1", "yes", "false", ""])
+def test_telemetry_cannot_be_enabled(monkeypatch, value: str) -> None:
+    """Reject legacy opt-ins without creating clients or user identifiers."""
+    monkeypatch.setenv("MOBILERUN_TELEMETRY_ENABLED", value)
+    monkeypatch.setenv("DROIDRUN_TELEMETRY_ENABLED", value)
     assert tracker.is_telemetry_enabled(config_enabled=True) is False
-
-
-def test_config_false_wins_when_environment_is_true(monkeypatch) -> None:
-    monkeypatch.setenv(PRIMARY_TELEMETRY_ENV, "true")
-
     assert tracker.is_telemetry_enabled(config_enabled=False) is False
 
 
-@pytest.mark.parametrize(
-    ("primary", "legacy", "expected"),
-    [
-        ("false", "true", False),
-        ("true", "false", True),
-        ("", "true", False),
-        (None, "false", False),
-        (None, "yes", True),
-    ],
-)
-def test_primary_environment_variable_takes_precedence_over_legacy(
-    monkeypatch, primary: str | None, legacy: str, expected: bool
-) -> None:
-    if primary is None:
-        monkeypatch.delenv(PRIMARY_TELEMETRY_ENV, raising=False)
-    else:
-        monkeypatch.setenv(PRIMARY_TELEMETRY_ENV, primary)
-    monkeypatch.setenv(LEGACY_TELEMETRY_ENV, legacy)
-
-    assert tracker.is_telemetry_enabled() is expected
-
-
-def test_disabled_capture_does_not_resolve_user_or_create_client(monkeypatch) -> None:
-    monkeypatch.setenv(PRIMARY_TELEMETRY_ENV, "true")
-    calls = []
-
-    def record_call(*args, **kwargs):
-        calls.append((args, kwargs))
-        raise AssertionError("disabled telemetry performed a side effect")
-
-    monkeypatch.setattr(tracker, "get_user_id", record_call)
-    monkeypatch.setattr(tracker, "_get_posthog", record_call)
-
-    tracker.capture(_package_visit_event(), config_enabled=False)
-
-    assert calls == []
-    assert tracker._posthog is None
-
-
-def test_disabled_flush_does_not_flush_an_existing_client(monkeypatch) -> None:
-    class FakePosthog:
-        def __init__(self):
-            self.flush_calls = 0
-
-        def flush(self) -> None:
-            self.flush_calls += 1
-
-    client = FakePosthog()
-    monkeypatch.setattr(tracker, "_posthog", client)
-    monkeypatch.setenv(PRIMARY_TELEMETRY_ENV, "true")
-
-    asyncio.run(tracker.flush(config_enabled=False))
-
-    assert client.flush_calls == 0
-
-
-def test_capture_remains_enabled_and_backward_compatible_by_default(
-    monkeypatch,
-) -> None:
-    class FakePosthog:
-        def __init__(self):
-            self.captures = []
-
-        def capture(self, event_name, *, distinct_id, properties) -> None:
-            self.captures.append((event_name, distinct_id, properties))
-
-    client = FakePosthog()
-    monkeypatch.setattr(tracker, "_get_posthog", lambda: client)
-    monkeypatch.setattr(tracker, "get_user_id", lambda: "generated-user-id")
-
-    tracker.capture(_package_visit_event())
-    tracker.capture(_package_visit_event(), "provided-user-id")
-
-    assert [capture[0] for capture in client.captures] == [
-        "PackageVisitEvent",
-        "PackageVisitEvent",
-    ]
-    assert [capture[1] for capture in client.captures] == [
-        "generated-user-id",
-        "provided-user-id",
-    ]
-    assert all(capture[2]["run_id"] == tracker.RUN_ID for capture in client.captures)
-    assert all(
-        capture[2]["package_name"] == "com.example.settings"
-        for capture in client.captures
-    )
-
-
-def test_posthog_client_is_constructed_once_under_concurrency(monkeypatch) -> None:
-    workers = 16
-    start_barrier = threading.Barrier(workers)
-    constructed = []
-
-    class FakePosthog:
-        def __init__(self, **kwargs):
-            # Release the GIL long enough for an unlocked lazy initializer to race.
-            time.sleep(0.02)
-            self.kwargs = kwargs
-            constructed.append(self)
-
-    monkeypatch.setattr(tracker, "Posthog", FakePosthog)
-
-    def get_client():
-        start_barrier.wait(timeout=5)
-        return tracker._get_posthog()
-
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        clients = list(executor.map(lambda _: get_client(), range(workers)))
-
-    assert len(constructed) == 1
-    assert all(client is constructed[0] for client in clients)
-    assert constructed[0].kwargs == {
-        "project_api_key": tracker.PROJECT_API_KEY,
-        "host": tracker.HOST,
-        "disable_geoip": False,
-    }
+def test_capture_never_serializes_or_logs_event_content(monkeypatch) -> None:
+    """Discard even explicitly enabled captures before accessing event contents."""
+    event = Mock(spec=PackageVisitEvent)
+    tracker.capture(event, config_enabled=True)
+    asyncio.run(tracker.flush(config_enabled=True))
+    event.model_dump.assert_not_called()
+    assert tracker.get_user_id() == "local"
+    assert not hasattr(tracker, "_posthog")
 
 
 def test_package_event_forwards_state_telemetry_setting(monkeypatch) -> None:
@@ -330,11 +190,11 @@ def test_mobile_agent_lifecycle_forwards_disabled_telemetry_config(
 def test_print_telemetry_message_respects_config_false(monkeypatch) -> None:
     messages = []
     monkeypatch.setenv(PRIMARY_TELEMETRY_ENV, "true")
-    monkeypatch.setattr(tracker.mobilerun_logger, "debug", messages.append)
+    monkeypatch.setattr(tracker.logger, "debug", messages.append)
 
     tracker.print_telemetry_message(config_enabled=False)
 
-    assert messages == [tracker.TELEMETRY_DISABLED_MESSAGE]
+    assert messages == ["Telemetry is permanently disabled by local-only policy."]
 
 
 def test_cli_run_and_test_forward_loaded_telemetry_config(monkeypatch) -> None:

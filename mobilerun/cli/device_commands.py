@@ -15,9 +15,7 @@ from functools import wraps
 from typing import Optional
 
 import click
-from async_adbutils import adb
 from mobilerun_core_local.driver.android import AndroidDriver
-from mobilerun_core_local.driver.android.portal import ensure_portal_ready
 from mobilerun_core_local.driver.ios import (
     IOSPortalHttpDriver,
     create_ios_driver,
@@ -32,7 +30,6 @@ from mobilerun.agent.utils.android_device import (
     is_portal_http_url,
     resolve_android_serial,
 )
-from mobilerun.agent.utils.portal_setup import portal_version_kwargs
 from mobilerun.config_manager import ConfigLoader
 from mobilerun.log_handlers import configure_logging
 from mobilerun.tools.filters import ConciseFilter
@@ -142,6 +139,9 @@ async def _create_driver(
             cloud = True
 
     if cloud:
+        from mobilerun.security import require_capability
+
+        require_capability("CLOUD")
         if ios:
             raise click.ClickException("--cloud and --ios are mutually exclusive.")
         cloud_device_id = device_id or device
@@ -152,8 +152,7 @@ async def _create_driver(
         api_key = resolve_cloud_api_key()
         if not api_key:
             raise click.ClickException(
-                f"No cloud API key found. Set {CLOUD_API_KEY_ENV} or run "
-                "`mobilerun login`."
+                f"No cloud API key found. Set {CLOUD_API_KEY_ENV} or run `mobilerun login`."
             )
         from mobilerun_core_local.driver.cloud import CloudDriver
 
@@ -203,10 +202,9 @@ async def _create_driver(
             raise click.ClickException(str(e)) from None
         click.echo(f"Using device: {serial}", err=True)
 
-    if config.device.auto_setup and config.device.portal_mode != "disabled":
-        device_obj = await adb.device(serial=serial)
-        await ensure_portal_ready(
-            device_obj, debug=False, **portal_version_kwargs(ensure_portal_ready)
+    if config.device.auto_setup:
+        raise click.ClickException(
+            "Automatic Portal setup is disabled. Set device.auto_setup=false."
         )
 
     driver = AndroidDriver(

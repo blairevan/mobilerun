@@ -44,6 +44,10 @@ class CodeResponse:
 
 
 def _endpoint(auth_url: str, path: str) -> str:
+    """Build cloud endpoints only after explicit operator authorization."""
+    from mobilerun.security import require_capability
+
+    require_capability("CLOUD")
     return auth_url.rstrip("/") + path
 
 

@@ -45,6 +45,9 @@ class ServerAppCardProvider(AppCardProvider):
         Returns:
             App card content or empty string if not found or on error
         """
+        from mobilerun.security import require_capability
+
+        require_capability("REMOTE_APP_CARDS")
         if not package_name:
             return ""
 

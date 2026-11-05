@@ -40,6 +40,9 @@ def arize_phoenix_callback_handler(**kwargs: Any) -> BaseCallbackHandler:
         - PHOENIX_URL: Phoenix server URL
         - PHOENIX_PROJECT_NAME: Project name for organizing traces
     """
+    from mobilerun.security import require_capability
+
+    require_capability("TRACING")
     # newer versions of arize, v2.x
     from openinference.instrumentation.llama_index import LlamaIndexInstrumentor
     from openinference.semconv.resource import ResourceAttributes

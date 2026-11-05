@@ -9,15 +9,10 @@ from enum import Enum
 from typing import Any
 
 import httpx
-import requests
 from async_adbutils import AdbDevice, adb
 from mobilerun_core_local.driver.android.portal import (
-    GITHUB_API_HOSTS,
     PORTAL_PACKAGE_NAME,
-    REPO,
     check_portal_accessibility,
-    enable_portal_accessibility,
-    get_compatible_portal_version,
     portal_content_uri,
     portal_ime_id,
 )
@@ -87,48 +82,10 @@ def _parse_portal_version(version_str: str) -> tuple:
 
 
 async def check_sdk_version(debug: bool) -> CheckResult:
-    """Check Mobilerun SDK version against latest GitHub release."""
-    current = __version__
-    latest = None
-
-    for host in GITHUB_API_HOSTS:
-        try:
-            url = f"{host}/repos/droidrun/mobilerun/releases/latest"
-            resp = requests.get(url, timeout=10)
-            if resp.status_code == 200:
-                data = resp.json()
-                # Handle both GitHub API formats
-                if "release" in data:
-                    tag = data["release"].get(
-                        "tag", data["release"].get("tag_name", "")
-                    )
-                else:
-                    tag = data.get("tag_name", "")
-                latest = tag.lstrip("v")
-                break
-        except Exception:
-            continue
-
-    if latest is None:
-        return CheckResult(
-            "SDK Version",
-            Status.WARN,
-            f"{current} (could not check latest)",
-            detail="GitHub API unreachable",
-        )
-
-    current_t = _parse_version_tuple(current)
-    latest_t = _parse_version_tuple(latest)
-
-    if current_t < latest_t:
-        return CheckResult(
-            "SDK Version",
-            Status.WARN,
-            f"{current} (latest: {latest})",
-            detail="pip install --upgrade mobilerun",
-        )
-    else:
-        return CheckResult("SDK Version", Status.PASS, f"{current} (up to date)")
+    """Report the installed SDK version without contacting a release server."""
+    return CheckResult(
+        "SDK Version", Status.PASS, f"{__version__} (local; remote check disabled)"
+    )
 
 
 async def check_config(debug: bool) -> tuple[CheckResult, Any]:
@@ -262,29 +219,14 @@ async def check_portal_installed(
 
 
 def _get_latest_portal_version() -> str | None:
-    """Fetch latest portal release version from GitHub."""
-    for host in GITHUB_API_HOSTS:
-        try:
-            url = f"{host}/repos/{REPO}/releases/latest"
-            resp = requests.get(url, timeout=10)
-            if resp.status_code == 200:
-                data = resp.json()
-                if "release" in data:
-                    tag = data["release"].get(
-                        "tag", data["release"].get("tag_name", "")
-                    )
-                else:
-                    tag = data.get("tag_name", "")
-                return tag.lstrip("v").strip() if tag else None
-        except Exception:
-            continue
-    return None
+    """Retain compatibility without performing a remote release check."""
+    return None  # Release checks are forbidden by local-only policy.
 
 
 async def check_portal_version(
     device: AdbDevice, debug: bool
 ) -> tuple[CheckResult, str | None, str | None, str | None]:
-    """Check portal version and compatibility. Returns (result, installed_ver, expected_ver, download_base)."""
+    """Read the installed Portal version without fetching remote version mappings."""
     # Get installed version
     installed = None
     try:
@@ -311,105 +253,12 @@ async def check_portal_version(
             None,
         )
 
-    # Get latest portal version from GitHub
-    latest_portal = _get_latest_portal_version()
-
-    # Get expected (compatible) version from version mapping
-    expected, download_base, mapping_fetched = get_compatible_portal_version(
-        __version__, debug
-    )
-
-    installed_t = _parse_portal_version(installed)
-
-    # Build message parts
-    parts = [f"v{installed}"]
-
-    if expected:
-        expected_t = _parse_portal_version(expected)
-        if installed_t != expected_t:
-            parts.append(f"expected {expected}")
-
-    if latest_portal:
-        latest_t = _parse_portal_version(latest_portal)
-        if installed_t < latest_t:
-            parts.append(f"latest: {latest_portal}")
-
-    msg = " → ".join(parts[:1]) + (
-        " (" + ", ".join(parts[1:]) + ")" if len(parts) > 1 else ""
-    )
-
-    # Determine status
-    if expected:
-        expected_t = _parse_portal_version(expected)
-        if installed_t < expected_t:
-            return (
-                CheckResult("Portal Version", Status.WARN, msg),
-                installed,
-                expected,
-                download_base,
-            )
-        if installed_t > expected_t:
-            # Auto-setup keeps a newer Portal too.
-            return (
-                CheckResult(
-                    "Portal Version",
-                    Status.PASS,
-                    f"v{installed} (newer than {expected}, "
-                    f"pinned for mobilerun {__version__})",
-                ),
-                installed,
-                expected,
-                download_base,
-            )
-        # The pinned Portal is correct even when a newer release exists.
-        return (
-            CheckResult(
-                "Portal Version",
-                Status.PASS,
-                f"v{installed} (pinned for mobilerun {__version__})",
-            ),
-            installed,
-            expected,
-            download_base,
-        )
-
-    if latest_portal:
-        latest_t = _parse_portal_version(latest_portal)
-        if installed_t < latest_t:
-            # Outdated but no specific compatible version required — warn
-            return (
-                CheckResult(
-                    "Portal Version",
-                    Status.WARN,
-                    msg,
-                    detail="pip install --upgrade mobilerun, then mobilerun setup",
-                ),
-                installed,
-                expected,
-                download_base,
-            )
-
-    if not mapping_fetched and not latest_portal:
-        return (
-            CheckResult(
-                "Portal Version",
-                Status.WARN,
-                f"v{installed} (could not check latest)",
-            ),
-            installed,
-            None,
-            None,
-        )
-
+    # Report only installed state; never fetch the remote compatibility map.
     return (
-        CheckResult(
-            "Portal Version",
-            Status.PASS,
-            f"v{installed} (up to date)",
-        ),
+        CheckResult("Portal Version", Status.PASS, f"v{installed} (local only)"),
         installed,
-        expected,
-        download_base,
+        None,
+        None,
     )
 
 
@@ -638,34 +487,9 @@ async def check_keyboard(device: AdbDevice, debug: bool) -> CheckResult:
 
 
 async def fix_enable_accessibility(device: AdbDevice, debug: bool) -> bool:
-    """Enable accessibility service. Returns True on success."""
-    console.print("  [blue]→ Enabling accessibility service...[/]")
-    try:
-        await enable_portal_accessibility(device)
-        # Verify
-        enabled = await check_portal_accessibility(device, debug=debug)
-        if enabled:
-            console.print("  [green]  accessibility enabled[/]")
-            return True
-        else:
-            console.print(
-                "  [yellow]  auto-enable may have failed, opening settings...[/]"
-            )
-            await device.shell("am start -a android.settings.ACCESSIBILITY_SETTINGS")
-            console.print(
-                f"  [yellow]  please enable {PORTAL_PACKAGE_NAME} manually[/]"
-            )
-            return False
-    except Exception as e:
-        console.print(f"  [red]  failed: {e}[/]")
-        try:
-            await device.shell("am start -a android.settings.ACCESSIBILITY_SETTINGS")
-            console.print(
-                f"  [yellow]  please enable {PORTAL_PACKAGE_NAME} manually[/]"
-            )
-        except Exception:
-            pass
-        return False
+    """Do not change accessibility permissions from diagnostics."""
+    console.print("Enable accessibility manually after reviewing the installed APK.")
+    return False
 
 
 # ── Orchestrator ─────────────────────────────────────────────────
@@ -675,7 +499,7 @@ async def run_doctor(
     device_serial: str | None = None,
     debug: bool = False,
 ) -> None:
-    """Run all doctor checks and auto-fix where possible."""
+    """Run local diagnostics without downloads or automatic permission changes."""
     debug = debug or False
 
     console.print("\n[bold]Mobilerun Doctor[/]\n")
@@ -717,38 +541,17 @@ async def run_doctor(
     r_portal, is_installed = await check_portal_installed(device, debug)
     _print_result(r_portal, debug)
     if not is_installed:
-        # Auto-fix: run setup
-        from mobilerun.cli.main import _setup_portal
-
-        await _setup_portal(path=None, device=device.serial, debug=debug)
-        # Re-check
-        r_portal, is_installed = await check_portal_installed(device, debug)
-        if not is_installed:
-            results.append(r_portal)
-            _print_summary(results)
-            return
+        results.append(r_portal)
+        console.print(
+            "Install a reviewed local APK with setup --path before continuing."
+        )
+        _print_summary(results)
+        return
     results.append(r_portal)
 
     # 7. Portal Version
-    r_version, installed_ver, _, _ = await check_portal_version(device, debug)
+    r_version, _, _, _ = await check_portal_version(device, debug)
     _print_result(r_version, debug)
-    if r_version.status == Status.WARN and installed_ver:
-        # Auto-fix: run setup to install compatible version
-        console.print("  [blue]→ Updating portal...[/]")
-        from mobilerun.cli.main import _setup_portal
-
-        await _setup_portal(path=None, device=device.serial, debug=debug, in_place=True)
-        # Wait for portal service to initialize after install
-        console.print("  [dim]  waiting for portal to start...[/]")
-        await asyncio.sleep(3)
-        # Re-check
-        r_version, _, _, _ = await check_portal_version(device, debug)
-        if r_version.status == Status.PASS:
-            console.print("  [green]  portal updated[/]")
-        else:
-            console.print(
-                "  [yellow]  update may not have resolved the version mismatch[/]"
-            )
     results.append(r_version)
 
     # 8. Accessibility

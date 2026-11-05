@@ -43,6 +43,10 @@ def setup_tracing(
     if not tracing_config.enabled:
         return
 
+    from mobilerun.security import require_capability
+
+    require_capability("TRACING")
+
     provider = tracing_config.provider.lower()
 
     with _tracing_setup_lock:
@@ -71,8 +75,7 @@ def setup_tracing(
                 logger.debug("🔍 Langfuse tracing enabled")
         else:
             logger.warning(
-                f"⚠️  Unknown tracing provider: {provider}. "
-                f"Supported providers: phoenix, langfuse"
+                f"⚠️  Unknown tracing provider: {provider}. Supported providers: phoenix, langfuse"
             )
 
 
@@ -91,6 +94,9 @@ def _check_phoenix_reachable(endpoint: str, timeout: float = 3.0) -> bool:
 
 def _setup_phoenix_tracing() -> bool:
     """Set up Arize Phoenix tracing. Returns True if successful."""
+    from mobilerun.security import require_capability
+
+    require_capability("TRACING")
     endpoint = os.getenv("PHOENIX_URL", "http://0.0.0.0:6006")
     # The handler imports its OpenTelemetry dependencies lazily, so a broken
     # install can surface while creating it as well as on import.
@@ -133,6 +139,10 @@ def _setup_langfuse_tracing(
     global _langfuse_client
     global _langfuse_preprocessor, _langfuse_tracer_provider
     global _langfuse_setup_attempted
+
+    from mobilerun.security import require_capability
+
+    require_capability("TRACING")
 
     try:
         from langfuse import Langfuse

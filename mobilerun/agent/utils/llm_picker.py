@@ -266,8 +266,7 @@ def _load_openai_responses(*, grok: bool = False, **kwargs: Any) -> LLM:
                 return
             if not isinstance(reasoning, dict):
                 raise ValueError(
-                    f"{model} reasoning must be a mapping with an optional "
-                    "'effort' value."
+                    f"{model} reasoning must be a mapping with an optional 'effort' value."
                 )
             effort = reasoning.get("effort")
             if effort is None:
@@ -491,8 +490,7 @@ def _load_openai_responses(*, grok: bool = False, **kwargs: Any) -> LLM:
 
     filtered_kwargs = {k: v for k, v in kwargs.items() if v is not None}
     logger.debug(
-        "Initializing MobilerunOpenAIResponses with kwargs: "
-        f"{list(filtered_kwargs.keys())}"
+        f"Initializing MobilerunOpenAIResponses with kwargs: {list(filtered_kwargs.keys())}"
     )
     return MobilerunOpenAIResponses(**filtered_kwargs)
 
@@ -618,8 +616,7 @@ def _load_google_genai(**kwargs: Any) -> LLM:
 
     filtered_kwargs = {k: v for k, v in kwargs.items() if v is not None}
     logger.debug(
-        "Initializing MobilerunGoogleGenAI with kwargs: "
-        f"{list(filtered_kwargs.keys())}"
+        f"Initializing MobilerunGoogleGenAI with kwargs: {list(filtered_kwargs.keys())}"
     )
     return MobilerunGoogleGenAI(**filtered_kwargs)
 
@@ -766,6 +763,13 @@ def load_llm(provider_name: str, model: str | None = None, **kwargs: Any) -> LLM
 
     provider_name = normalize_provider_name(provider_name)
 
+    from mobilerun.security import mark_local_llm, validate_model_config
+
+    local_url = validate_model_config(
+        provider_name, model or kwargs.get("model"), kwargs
+    )
+    kwargs["base_url"] = local_url
+
     if model is not None:
         if provider_name == "OpenAIResponses":
             model = normalize_model_id_for_variant("openai", "api_key", model)
@@ -816,8 +820,7 @@ def load_llm(provider_name: str, model: str | None = None, **kwargs: Any) -> LLM
             api_key = os.environ.get("MINIMAX_API_KEY")
         if not isinstance(api_key, str) or not api_key.strip():
             raise ValueError(
-                "MiniMax requires an API key. Pass api_key explicitly or set "
-                "MINIMAX_API_KEY."
+                "MiniMax requires an API key. Pass api_key explicitly or set MINIMAX_API_KEY."
             )
 
         provider_name = "OpenAILike"
@@ -848,8 +851,7 @@ def load_llm(provider_name: str, model: str | None = None, **kwargs: Any) -> LLM
             api_key = os.environ.get("XAI_API_KEY")
         if not isinstance(api_key, str) or not api_key.strip():
             raise ValueError(
-                "XAI requires an API key. Pass api_key explicitly or set "
-                "XAI_API_KEY."
+                "XAI requires an API key. Pass api_key explicitly or set XAI_API_KEY."
             )
 
         kwargs["api_key"] = api_key
@@ -907,6 +909,20 @@ def load_llm(provider_name: str, model: str | None = None, **kwargs: Any) -> LLM
 
         llm_class = Ollama
         kwargs = _prepare_ollama_kwargs(kwargs, Ollama)
+        parameters = inspect.signature(Ollama.__init__).parameters
+        transport_options = {"trust_env": False, "follow_redirects": False}
+        if {"client", "async_client"}.issubset(parameters):
+            from ollama import AsyncClient, Client
+
+            kwargs["client"] = Client(host=local_url, **transport_options)
+            kwargs["async_client"] = AsyncClient(host=local_url, **transport_options)
+        elif {"client_kwargs", "async_client_kwargs"}.issubset(parameters):
+            kwargs["client_kwargs"] = dict(transport_options)
+            kwargs["async_client_kwargs"] = dict(transport_options)
+        else:
+            raise PermissionError(
+                "This Ollama adapter cannot enforce local transport policy."
+            )
     elif provider_name == "Anthropic":
         kwargs.setdefault("model", ANTHROPIC_API_DEFAULT_MODEL)
         return _load_anthropic(**kwargs)
@@ -916,15 +932,16 @@ def load_llm(provider_name: str, model: str | None = None, **kwargs: Any) -> LLM
         llm_class = OpenRouter
     else:
         raise ValueError(
-            f"Unsupported provider '{provider_name}'. "
-            f"Supported: {sorted(SUPPORTED_PROVIDERS)}"
+            f"Unsupported provider '{provider_name}'. Supported: {sorted(SUPPORTED_PROVIDERS)}"
         )
 
     filtered_kwargs = {k: v for k, v in kwargs.items() if v is not None}
     logger.debug(
         f"Initializing {llm_class.__name__} with kwargs: {list(filtered_kwargs.keys())}"
     )
-    return llm_class(**filtered_kwargs)
+    llm = llm_class(**filtered_kwargs)
+    mark_local_llm(llm)
+    return llm
 
 
 def load_llms_from_profiles(
@@ -965,8 +982,7 @@ def load_llms_from_profiles(
 
         if profile_name not in profiles:
             raise KeyError(
-                f"Profile '{profile_name}' not found. "
-                f"Available profiles: {list(profiles.keys())}"
+                f"Profile '{profile_name}' not found. Available profiles: {list(profiles.keys())}"
             )
 
         profile = profiles[profile_name]

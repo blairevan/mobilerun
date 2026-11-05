@@ -46,7 +46,8 @@ class SetupSelection:
 
 
 def family_choices() -> tuple[ProviderFamilySpec, ...]:
-    return list_provider_families()
+    """Expose only the local model family in the configuration wizard."""
+    return tuple(family for family in list_provider_families() if family.id == "ollama")
 
 
 def auth_mode_choices(family_id: str) -> tuple[str, ...]:
@@ -72,6 +73,9 @@ def _probe_zai_chat_completions(
     model_id: str,
     timeout_seconds: float = 5.0,
 ) -> bool:
+    from mobilerun.security import reject_remote_model_login
+
+    reject_remote_model_login()
     try:
         response = httpx.post(
             f"{base_url.rstrip('/')}/chat/completions",
@@ -144,6 +148,14 @@ def create_profile_for_variant(
     *,
     temperature: float = 0.2,
 ) -> LLMProfile:
+    """Create only an explicit, validated local model profile."""
+    from mobilerun.security import LOCAL_MODEL_URL, validate_model_config
+
+    validate_model_config(
+        variant.runtime_provider_name,
+        selection.model,
+        {"base_url": selection.base_url or variant.base_url or LOCAL_MODEL_URL},
+    )
     base_url = selection.base_url or variant.base_url
     base_url, resolved_model = _resolve_zai_selection(selection, base_url)
     resolved_model = normalize_model_id_for_variant(

@@ -70,6 +70,42 @@ Use the framework when you want to run the agent on your machine. Use [Mobilerun
 | Android on [Mobilerun Cloud](https://mobilerun.ai) | ✅ | Hosted phones or your own |
 | iOS on [Mobilerun Cloud](https://mobilerun.ai) | ✅ | Hosted iPhones or your own |
 
+## Local-only security policy (this fork)
+
+This fork is not the upstream default distribution. Install this reviewed source,
+not the `mobilerun` package from PyPI, if you want these restrictions.
+
+From this checkout, use `uv sync --locked --no-dev`, then
+`.venv/bin/mobilerun configure` to select an already installed local Ollama model.
+Dependency installation may use the Internet; normal local execution is restricted
+as described below. This change does not install Ollama, a model, or an APK for you.
+
+- Telemetry is permanently disabled, even when old configuration or environment
+  variables enable it. No PostHog client or persistent tracking identifier is created.
+- Only Ollama at an HTTP(S) loopback origin is accepted. Configure **every** model
+  profile with `provider: Ollama`, an already installed local `model`, and optionally
+  `base_url: http://127.0.0.1:11434`. Empty model names fail explicitly. Public model
+  providers, model OAuth, cloud-named Ollama models and custom transports are rejected.
+  Model clients disable environment proxies and redirects; incompatible adapters fail
+  closed. There is no automatic model download or provider substitution.
+- Set `device.auto_setup: false` in existing configs. Install a reviewed local APK
+  with `mobilerun setup --path /absolute/path/portal.apk`. Downloads, automatic
+  updates, permission grants, uninstallation and accessibility enabling are disabled.
+  Grant device permissions manually after review. `doctor` only performs local checks.
+- Cloud, MCP, remote app cards and tracing remain available but require separate
+  operator opt-ins: `MOBILERUN_ALLOW_CLOUD=1`, `MOBILERUN_ALLOW_MCP=1`,
+  `MOBILERUN_ALLOW_REMOTE_APP_CARDS=1`, `MOBILERUN_ALLOW_TRACING=1`, respectively.
+  Keep these variables unset for local-only use. Existing credentials or YAML flags
+  alone do not authorize these capabilities. Custom tools and external agents also
+  require the MCP opt-in because they can execute arbitrary code.
+
+These are application checks, **not a network sandbox**. Dependencies, device APKs,
+phone apps, arbitrary Python extensions, and a local Ollama server configured to
+forward to a cloud service need separate review. Configure Ollama itself for offline
+operation and use OS-level egress restrictions for a strict no-Internet guarantee.
+Package installation can still contact package registries. Upstream instructions
+below describe features that this fork intentionally restricts.
+
 ## 📦 Installation
 
 > **Note:** Python 3.14 is not currently supported. Please use Python `>=3.11,<3.14`.

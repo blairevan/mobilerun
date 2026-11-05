@@ -74,8 +74,8 @@ agent:
 llm_profiles:
   # Manager: Plans and reasons about task progress
   manager:
-    provider: GoogleGenAI
-    model: gemini-3.8-flash
+    provider: Ollama
+    model: ""  # Required: choose an already installed local model.
     temperature: 0.2
     # api_key_source: auto  # auto = saved env file first, then shell env; env = shell only; file = saved env file
     # kwargs: # optional kwargs, add api_key in kwargs if not already in .env
@@ -93,8 +93,8 @@ llm_profiles:
       
   # Executor: Selects and executes atomic actions
   executor:
-    provider: GoogleGenAI
-    model: gemini-3.8-flash
+    provider: Ollama
+    model: ""  # Required: choose an already installed local model.
     temperature: 0.1
     # api_key_source: auto
     # kwargs:
@@ -102,8 +102,8 @@ llm_profiles:
       
   # Fast Agent: Direct execution agent (XML tool-calling or code generation)
   fast_agent:
-    provider: GoogleGenAI
-    model: gemini-3.8-flash
+    provider: Ollama
+    model: ""  # Required: choose an already installed local model.
     temperature: 0.2
     # api_key_source: auto
     # kwargs:
@@ -111,8 +111,8 @@ llm_profiles:
       
   # App Opener: Opens apps by name/description
   app_opener:
-    provider: GoogleGenAI
-    model: gemini-3.8-flash
+    provider: Ollama
+    model: ""  # Required: choose an already installed local model.
     temperature: 0.0
     # api_key_source: auto
     # kwargs:
@@ -120,8 +120,8 @@ llm_profiles:
 
   # Structured Output: Extracts structured data from final answers
   structured_output:
-    provider: GoogleGenAI
-    model: gemini-3.8-flash
+    provider: Ollama
+    model: ""  # Required: choose an already installed local model.
     temperature: 0.0
     # api_key_source: auto
     # kwargs:
@@ -142,9 +142,9 @@ device:
   platform: android
   # Android only: auto = ADB-first with optional Portal, required = fail without Portal, disabled = ADB-only.
   portal_mode: auto
-  # Android only: auto-install/update Portal APK and enable accessibility before each run.
+  # Automatic installation and permission changes are forbidden in this fork.
   # iOS requires a running iOS Portal URL or discovery through iproxy.
-  auto_setup: true
+  auto_setup: false
   # Bearer token for portal-HTTP device URLs: the token shown in the Android
   # Portal app (always required), or a `mobilerun-ios --local` server's
   # --local-token (loopback servers need none).
@@ -153,8 +153,8 @@ device:
 
 # === Telemetry Settings ===
 telemetry:
-  # Enable anonymous telemetry
-  enabled: true
+  # Telemetry is permanently disabled, including for legacy enabled=true configs.
+  enabled: false
 
 # === Tracing Settings ===
 tracing:

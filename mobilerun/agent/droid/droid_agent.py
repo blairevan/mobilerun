@@ -18,7 +18,6 @@ from async_adbutils import adb
 from llama_index.core.llms.llm import LLM
 from llama_index.core.workflow import Context, StartEvent, StopEvent, Workflow, step
 from mobilerun_core_local.driver.android import AndroidDriver
-from mobilerun_core_local.driver.android.portal import ensure_portal_ready
 from mobilerun_core_local.driver.base import DeviceDisconnectedError
 from mobilerun_core_local.driver.ios import (
     IOSPortalHttpDriver,
@@ -69,7 +68,6 @@ from mobilerun.agent.utils.llm_loader import (
     load_agent_llms,
     merge_llms_with_config,
 )
-from mobilerun.agent.utils.portal_setup import portal_version_kwargs
 from mobilerun.agent.utils.prompt_resolver import PromptResolver
 from mobilerun.agent.utils.signatures import build_tool_registry
 from mobilerun.agent.utils.tracing_setup import (
@@ -310,6 +308,12 @@ class MobileAgent(Workflow):
         *args,
         **kwargs,
     ):
+        if llms is not None:
+            from mobilerun.security import validate_local_llm
+
+            candidates = llms.values() if isinstance(llms, dict) else (llms,)
+            for candidate in candidates:
+                validate_local_llm(candidate)
         self._configure_default_logging(debug=bool(config and config.logging.debug))
         self.user_id = kwargs.pop("user_id", None)
         self.runtype = kwargs.pop("runtype", "developer")
@@ -344,6 +348,11 @@ class MobileAgent(Workflow):
             self.credential_manager = None
 
         self.resolved_device_config = config.device if config else DeviceConfig()
+        if self.resolved_device_config.auto_setup:
+            raise PermissionError(
+                "Automatic Portal setup is disabled. Set device.auto_setup=false "
+                "and install a reviewed APK explicitly."
+            )
 
         self.config = MobileConfig(
             agent=config.agent if config else AgentConfig(),
@@ -387,6 +396,10 @@ class MobileAgent(Workflow):
         # Check if using external agent - skip LLM loading
         _BUILTIN_AGENT_NAMES = {"mobilerun", "droidrun"}
         self._using_external_agent = self.config.agent.name not in _BUILTIN_AGENT_NAMES
+        if self._using_external_agent or custom_tools:
+            from mobilerun.security import require_capability
+
+            require_capability("MCP")
 
         self._stream_screenshots = (
             os.environ.get("MOBILERUN_STREAM_SCREENSHOTS")
@@ -570,8 +583,7 @@ class MobileAgent(Workflow):
             device_serial = self.resolved_device_config.serial
             if is_portal_http_url(device_serial):
                 raise ValueError(
-                    "External agents need an ADB device; a Portal HTTP URL is "
-                    "not supported."
+                    "External agents need an ADB device; a Portal HTTP URL is not supported."
                 )
             if device_serial is None:
                 device_serial = await resolve_android_serial()
@@ -712,18 +724,11 @@ class MobileAgent(Workflow):
 
             self.android_serial = device_serial
 
-            # Auto-setup portal if enabled
-            if (
-                self.config.device.auto_setup
-                and self.resolved_device_config.portal_mode != "disabled"
-            ):
-                device_obj = await adb.device(serial=device_serial)
-                await ensure_portal_ready(
-                    device_obj,
-                    debug=self.config.logging.debug,
-                    **portal_version_kwargs(ensure_portal_ready),
+            # Never call the dependency auto-installer, even if config is mutated.
+            if self.config.device.auto_setup:
+                raise PermissionError(
+                    "Automatic Portal setup is disabled by local policy."
                 )
-
             driver = AndroidDriver(
                 serial=device_serial,
                 use_tcp=self.resolved_device_config.use_tcp,

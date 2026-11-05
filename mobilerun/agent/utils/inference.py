@@ -197,6 +197,9 @@ async def acall_with_retries(
     Returns:
         The LLM ChatResponse object
     """
+    from mobilerun.security import validate_local_llm
+
+    validate_local_llm(llm)
     last_exception: Optional[Exception] = None
 
     for attempt in range(1, retries + 1):
@@ -234,8 +237,7 @@ async def acall_with_retries(
 
         except Exception as e:
             logger.warning(
-                f"Attempt {attempt} failed with error: "
-                f"{type(e).__name__}: {describe_error(e)}"
+                f"Attempt {attempt} failed with error: {type(e).__name__}: {describe_error(e)}"
             )
             if _is_permanent_http_client_error(e):
                 raise
@@ -316,6 +318,9 @@ async def acomplete_with_retries(
     Returns:
         The LLM CompletionResponse object
     """
+    from mobilerun.security import validate_local_llm
+
+    validate_local_llm(llm)
     last_exception: Optional[Exception] = None
 
     for attempt in range(1, retries + 1):
@@ -343,8 +348,7 @@ async def acomplete_with_retries(
 
         except Exception as e:
             logger.warning(
-                f"Attempt {attempt} failed with error: "
-                f"{type(e).__name__}: {describe_error(e)}"
+                f"Attempt {attempt} failed with error: {type(e).__name__}: {describe_error(e)}"
             )
             if _is_permanent_http_client_error(e):
                 raise
@@ -421,6 +425,9 @@ async def astructured_predict_with_retries(
     Returns:
         Instance of the output_cls Pydantic model
     """
+    from mobilerun.security import validate_local_llm
+
+    validate_local_llm(llm)
     last_exception: Optional[Exception] = None
 
     for attempt in range(1, retries + 1):
@@ -445,8 +452,7 @@ async def astructured_predict_with_retries(
 
         except Exception as e:
             logger.warning(
-                f"Attempt {attempt} failed with error: "
-                f"{type(e).__name__}: {describe_error(e)}"
+                f"Attempt {attempt} failed with error: {type(e).__name__}: {describe_error(e)}"
             )
             if _is_permanent_http_client_error(e):
                 raise

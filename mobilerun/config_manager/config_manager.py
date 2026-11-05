@@ -8,7 +8,6 @@ import yaml
 
 from mobilerun.agent.providers.minimax import warn_if_legacy_minimax_endpoint
 from mobilerun.agent.providers.registry import (
-    GEMINI_API_DEFAULT_MODEL,
     VARIANT_ENV_KEY_SLOT,
 )
 from mobilerun.config_manager.env_keys import API_KEY_ENV_VARS, load_env_key_sources
@@ -24,8 +23,8 @@ DEFAULT_STATELESS_MANAGER_SYSTEM_PROMPT = "config/prompts/manager/stateless.jinj
 class LLMProfile:
     """LLM profile configuration."""
 
-    provider: str = "GoogleGenAI"
-    model: str = GEMINI_API_DEFAULT_MODEL
+    provider: str = "Ollama"
+    model: str = ""
     temperature: float = 0.2
     api_key_source: Literal["auto", "env", "file"] = "auto"
     base_url: Optional[str] = None
@@ -175,7 +174,7 @@ class DeviceConfig:
     use_tcp: bool = False
     platform: str = "android"  # "android" or "ios"
     portal_mode: Literal["auto", "required", "disabled"] = "auto"
-    auto_setup: bool = True  # auto-install/fix portal before each run
+    auto_setup: bool = False  # Local policy requires explicit APK installation.
     # Bearer token for portal-HTTP device URLs: the Android Portal app's token
     # (always required) or a mobilerun-ios --local server's --local-token
     # (loopback servers need none). The MOBILERUN_DEVICE_TOKEN env var
@@ -190,7 +189,7 @@ class DeviceConfig:
 class TelemetryConfig:
     """Telemetry configuration."""
 
-    enabled: bool = True
+    enabled: bool = False
 
 
 @dataclass
@@ -270,32 +269,32 @@ class MobileConfig:
         """Get default agent specific LLM profiles."""
         return {
             "manager": LLMProfile(
-                provider="GoogleGenAI",
-                model=GEMINI_API_DEFAULT_MODEL,
+                provider="Ollama",
+                model="",
                 temperature=0.2,
                 kwargs={},
             ),
             "executor": LLMProfile(
-                provider="GoogleGenAI",
-                model=GEMINI_API_DEFAULT_MODEL,
+                provider="Ollama",
+                model="",
                 temperature=0.1,
                 kwargs={},
             ),
             "fast_agent": LLMProfile(
-                provider="GoogleGenAI",
-                model=GEMINI_API_DEFAULT_MODEL,
+                provider="Ollama",
+                model="",
                 temperature=0.2,
                 kwargs={},
             ),
             "app_opener": LLMProfile(
-                provider="GoogleGenAI",
-                model=GEMINI_API_DEFAULT_MODEL,
+                provider="Ollama",
+                model="",
                 temperature=0.0,
                 kwargs={},
             ),
             "structured_output": LLMProfile(
-                provider="GoogleGenAI",
-                model=GEMINI_API_DEFAULT_MODEL,
+                provider="Ollama",
+                model="",
                 temperature=0.0,
                 kwargs={},
             ),
